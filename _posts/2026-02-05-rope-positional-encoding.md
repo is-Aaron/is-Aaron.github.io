@@ -180,10 +180,10 @@ RoPE 将高维向量两两分组，每组作为一个二维子空间进行旋转
 $$
 \text{RoPE}(\mathbf{x}, m) = 
 \begin{pmatrix}
-x_1 \cos(m\theta_1) - x_2 \sin(m\theta_1) \\
-x_1 \sin(m\theta_1) + x_2 \cos(m\theta_1) \\
-x_3 \cos(m\theta_2) - x_4 \sin(m\theta_2) \\
-x_3 \sin(m\theta_2) + x_4 \cos(m\theta_2) \\
+x_1 \cos(m\theta_0) - x_2 \sin(m\theta_0) \\
+x_1 \sin(m\theta_0) + x_2 \cos(m\theta_0) \\
+x_3 \cos(m\theta_1) - x_4 \sin(m\theta_1) \\
+x_3 \sin(m\theta_1) + x_4 \cos(m\theta_1) \\
 \vdots
 \end{pmatrix}
 $$
@@ -283,9 +283,9 @@ flowchart LR
     style S3 fill:#a5d8ff,stroke:#1864ab,color:#1864ab
 ```
 
-**注意**：RoPE 本身**并不会自动导致**注意力分数随距离衰减。是否产生"近处关注强、远处关注弱"的效果，取决于模型学习到的 Query/Key 权重。RoPE 只是提供了编码相对位置的能力，如何利用这个信息由模型自己学习。
+**注意**：RoPE 的原始论文证明了注意力分数具有随相对距离增大而**长期衰减**的理论性质（基于 Riemann-Lebesgue 引理），但这种衰减是**隐式**的，实际的衰减幅度和模式还受模型学习到的 Query/Key 权重影响。
 
-> 这与 ALiBi 不同——ALiBi **显式地**对注意力分数施加线性衰减偏置，而 RoPE 是隐式编码。
+> 这与 ALiBi 不同——ALiBi **显式地**对注意力分数施加线性衰减偏置，而 RoPE 的衰减是隐式编码在旋转角度中的。
 
 ### 优势三：长度外推潜力
 
@@ -375,9 +375,9 @@ class RotaryEmbedding(torch.nn.Module):
             # 拼接两份用于 rotate_half 技巧 [seq_len, dim]
             emb = torch.cat((freqs, freqs), dim=-1)
             # 添加维度以便广播到 [batch, seq, heads, dim]
-            # 形状变为 [seq_len, 1, 1, dim]
-            self.cos_cached = emb.cos()[:, None, None, :]
-            self.sin_cached = emb.sin()[:, None, None, :]
+            # 形状变为 [1, seq_len, 1, dim]
+            self.cos_cached = emb.cos()[None, :, None, :]
+            self.sin_cached = emb.sin()[None, :, None, :]
         return self.cos_cached, self.sin_cached
 
 
@@ -410,7 +410,7 @@ def apply_rotary_pos_emb(q, k, cos, sin):
     
     参数:
         q, k: [batch, seq_len, num_heads, head_dim]
-        cos, sin: [seq_len, 1, 1, head_dim] (会广播到 q/k 的形状)
+        cos, sin: [1, seq_len, 1, head_dim] (会广播到 q/k 的形状)
     """
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)

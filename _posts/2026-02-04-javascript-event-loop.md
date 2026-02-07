@@ -28,7 +28,7 @@ graph LR
 | 类型   | 包含                                              |
 | ------ | ------------------------------------------------- |
 | 宏任务 | `script`、`setTimeout`、`setInterval`、I/O          |
-| 微任务 | `Promise.then/catch/finally`、`MutationObserver`   |
+| 微任务 | `Promise.then/catch/finally`、`MutationObserver`、`queueMicrotask` |
 
 **优先级：微任务 > 宏任务**
 
@@ -77,6 +77,6 @@ console.log('4. 结束');      // 同步
 | 单线程       | JS 同一时间只能做一件事                 |
 | 异步不阻塞   | 耗时操作交给 Web APIs，不卡住调用栈     |
 | 微任务优先   | 每个宏任务后，必须清空所有微任务        |
-| 循环往复     | 宏任务 → 微任务 → 宏任务 → ...          |
+| 循环往复     | 宏任务 → 微任务 → 渲染 → 宏任务 → ...   |
 
 **一句话总结**：事件循环让单线程的 JavaScript 能够"一心多用"——同步代码优先执行，微任务插队，宏任务排队。

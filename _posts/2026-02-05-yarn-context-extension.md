@@ -7,7 +7,7 @@ math: true
 mermaid: true
 ---
 
-> **核心观点**：YaRN（Yet Another RoPE Extension）通过**NTK-by-parts分段插值**实现了对RoPE位置编码的智能缩放——对高频分量（短波长）进行内插以适应更长序列，对低频分量（长波长）保持外推以保留长距离依赖能力，成为现代大模型支持长上下文的高效技术方案。
+> **核心观点**：YaRN（Yet Another RoPE Extension）通过**NTK-by-parts分段插值**实现了对RoPE位置编码的智能缩放——对高频分量（短波长，训练时已完整旋转多个周期）保持外推，对低频分量（长波长，训练时仅经历部分周期）进行内插以适应更长序列，并通过**ramp函数**实现分段线性的平滑过渡，成为现代大模型支持长上下文的高效技术方案。
 
 ## 一、为什么需要上下文扩展？
 
@@ -27,7 +27,7 @@ mermaid: true
 timeline
     title 大模型上下文窗口扩展技术演进史
     section 位置编码基础
-      2020 : RoPE 提出<br>引入旋转位置编码<br>（相对位置 + 频率分层）
+      2021 : RoPE 提出<br>引入旋转位置编码<br>（相对位置 + 频率分层）
     section 扩展技术探索
       2023.6 : Position Interpolation (PI)<br>（Meta提出均匀插值）<br>❌ 破坏高频细节
       2023.7 : NTK-Aware Scaling<br>（社区提出频率缩放）<br>⚠️ 微调后效果不佳
@@ -142,26 +142,24 @@ flowchart TD
 
 研究者意识到关键洞察：**不同频率分量应该差异化对待**。
 
-NTK-Aware Scaling提出：
-- **高频分量**（短波长，负责局部细节）→ **大幅内插**（压缩频率）
-- **低频分量**（长波长，负责长距离）→ **尽量外推**（保持频率）
+NTK-Aware Scaling（由社区研究者bloc97在Reddit上提出）的核心思想是：将简单内插对所有维度的统一压缩，分散到不同维度上——**高频分量少缩放（更接近外推），低频分量多缩放（更接近内插）**。
 
-**实现方式**：使用指数函数动态调整缩放因子
+**实现方式**：通过修改RoPE的基数（base change）来实现频率相关的缩放
 
-$$ \lambda_i = \left(\frac{1}{s}\right)^{\alpha \cdot (1 - i/(d/2))} $$
+$$ b' = b \cdot s^{\frac{|D|}{|D| - 2}} $$
 
-其中 $\alpha$ 控制缩放的陡峭程度。
+其中 $b$ 是原始基数（10000），$s$ 是扩展比例，$|D|$ 是隐藏维度数。这等价于对每个维度应用不同的缩放因子 $\theta'_i / \theta_i = s^{-2i/(|D|-2)}$——维度索引 $i$ 越小（频率越高），缩放越少（越接近外推）；$i$ 越大（频率越低），缩放越多（越接近内插）。
 
 **不足之处**：
 
-指数函数可能在某些维度上导致不理想的缩放。实验结果显示，NTK-Aware的整体性能不如简单内插（PI）和YaRN，这表明其缩放策略可能存在优化空间。
+NTK-Aware在**不微调**时表现优于简单内插（PI），但在**微调后**效果反而不如PI。YaRN论文作者推测，这是因为NTK-Aware对高频分量保持外推（不缩放），导致模型在微调时难以适应高频维度上超出训练分布的旋转角度，损害了对局部细节的理解能力。
 
 ### 2.4 集大成者：YaRN的诞生
 
 **YaRN（Yet Another RoPE Extension）**由Nous Research和EleutherAI的研究者（Bowen Peng, Jeffrey Quesnelle, Honglu Fan, Enrico Shippole）于2023年8月31日提出（arXiv 2309.00071）。其中Honglu Fan同时隶属于日内瓦大学。
 
 **核心创新**：YaRN = **NTK-by-parts频率缩放** + **注意力温度校正**，实现了两方面的优化：
-1. 使用**分段线性插值**（ramp function）替代NTK-Aware的指数函数
+1. 使用基于**旋转周期数**的**分段线性ramp函数**，在与NTK-Aware相同的缩放方向（高频外推、低频内插）上，通过明确的边界阈值实现更精确的分段控制——高频维度**完全外推**、低频维度**完全内插**、中间维度平滑过渡
 2. 引入**温度参数**修正扩展上下文后的注意力分布偏移
 
 ## 三、YaRN的技术原理
@@ -172,7 +170,7 @@ YaRN对RoPE频率使用**分段线性插值**（也称"NTK-by-parts"）：
 
 $$ h(\theta_i) = (1 - \gamma(r)) \cdot \frac{\theta_i}{s} + \gamma(r) \cdot \theta_i $$
 
-其中 $\gamma(r)$ 是一个**ramp函数**（斜坡函数），基于波长与训练长度的比值 $r = \lambda_i / L$：
+其中 $\gamma(r)$ 是一个**ramp函数**（斜坡函数），基于维度 $i$ 在训练长度内完成的旋转周期数 $r = L / \lambda_i$：
 
 $$
 \gamma(r) = 
@@ -187,12 +185,13 @@ $$
 - $s = L_{\text{target}} / L_{\text{train}}$ —— 扩展比例
 - $\theta_i = \text{base}^{-2i/d}$ —— 原始RoPE频率
 - $\lambda_i = 2\pi / \theta_i$ —— 波长（完成一次完整旋转所需的token数）
-- $\alpha, \beta$ —— ramp函数的边界参数（YaRN论文实验中使用 $\alpha=1, \beta=32$，具体实现可能因模型而异）
+- $r = L / \lambda_i$ —— 维度 $i$ 在训练长度 $L$ 内完成的**旋转周期数**
+- $\alpha, \beta$ —— ramp函数的边界参数，表示旋转周期数的阈值（YaRN论文实验中使用 $\alpha=1, \beta=32$，具体实现可能因模型而异）
 
 **工作原理**：
-- **短波长**（$\lambda_i < \alpha \cdot L$，高频）：$\gamma=0$ → $h(\theta_i) = \theta_i/s$ → **完全内插**（频率被缩小）
-- **长波长**（$\lambda_i > \beta \cdot L$，低频）：$\gamma=1$ → $h(\theta_i) = \theta_i$ → **完全外推**（频率保持不变）
-- **中间波长**（$\alpha \cdot L \leq \lambda_i \leq \beta \cdot L$）：$0 < \gamma < 1$ → **平滑过渡**
+- **高频分量**（$r > \beta$，即旋转超过32周，短波长）：$\gamma=1$ → $h(\theta_i) = \theta_i$ → **完全外推**（频率保持不变，因为模型已充分学习这些维度的旋转模式）
+- **低频分量**（$r < \alpha$，即旋转不足1周，长波长）：$\gamma=0$ → $h(\theta_i) = \theta_i/s$ → **完全内插**（频率被缩小，将位置压缩到已见范围内）
+- **中间频率**（$\alpha \leq r \leq \beta$）：$0 < \gamma < 1$ → **平滑过渡**
 
 ### 3.2 核心公式（二）：注意力温度缩放
 
@@ -206,9 +205,9 @@ $$ \text{softmax}\left(\frac{q_m^T k_n}{t\sqrt{|D|}}\right) $$
 
 温度参数 $t$ 根据扩展比例 $s$ 自动确定：
 
-$$ t = 0.1 \ln(s) + 1 $$
+$$ \sqrt{\frac{1}{t}} = 0.1 \ln(s) + 1 $$
 
-例如，当 $s=8$ 时，$t = 0.1 \times \ln(8) + 1 \approx 1.208$。
+即 $t = \frac{1}{(0.1 \ln(s) + 1)^2}$。例如，当 $s=8$ 时，$\sqrt{1/t} = 0.1 \times \ln(8) + 1 \approx 1.208$，因此 $t \approx 0.685$。由于 $t < 1$，注意力分布会变得更集中，以补偿长上下文导致的注意力过度分散。
 
 **作用**：扩展上下文后，注意力分数的分布会发生偏移，温度缩放用于校正这种偏移，使模型在长上下文下保持良好的校准（calibration）。
 
@@ -225,12 +224,12 @@ graph TB
         
         A["维度索引 i"] --> B["简单内插<br/>所有维度 = 1/8<br/>（常数）"]
         A --> C["NTK-Aware<br/>指数衰减<br/>（维度相关）"]
-        A --> D["YaRN<br/>基于波长ramp函数<br/>（波长相关）"]
+        A --> D["YaRN<br/>基于旋转周期数ramp函数<br/>（分段控制）"]
     end
     
     B --> B1["❌ 所有维度统一<br/>破坏高频"]
-    C --> C1["⚠️ 低频可能<br/>过度外推"]
-    D --> D1["✅ 平滑过渡<br/>无过度外推"]
+    C --> C1["⚠️ 过渡平滑但无明确<br/>分段边界"]
+    D --> D1["✅ ramp分段控制<br/>高频完全外推+低频完全内插"]
     
     style B fill:#ff6b6b,stroke:#c92a2a,stroke-width:3px,color:#fff
     style C fill:#ffd43b,stroke:#d9480f,stroke-width:3px,color:#000
@@ -243,44 +242,46 @@ graph TB
 
 | 维度索引 $i$ | 频率类型 | 简单内插 | NTK-Aware | **YaRN**     |
 | ------------ | -------- | -------- | --------- | ------------ |
-| 0 (最高频)   | 局部细节 | 0.125    | 0.125     | **0.125**    |
-| 16           | 中等距离 | 0.125    | ~0.25     | **~0.3-0.4** |
-| 32           | 中等距离 | 0.125    | ~0.5      | **~0.5-0.6** |
-| 48           | 长距离   | 0.125    | ~0.75     | **~0.7-0.9** |
-| 63 (最低频)  | 长距离   | 0.125    | ~1.0      | **1.0**      |
+| 0 (最高频)   | 局部细节 | 0.125    | ~1.0      | **1.0**      |
+| 16           | 中等距离 | 0.125    | ~0.61     | **1.0**      |
+| 32           | 中等距离 | 0.125    | ~0.37     | **~0.60**    |
+| 48           | 长距离   | 0.125    | ~0.22     | **0.125**    |
+| 63 (最低频)  | 长距离   | 0.125    | ~0.125    | **0.125**    |
 
-> 💡 **注意**：YaRN的具体数值取决于波长和ramp函数参数（α, β），上表为示意性数值。
+> 💡 **注意**：YaRN的具体数值取决于ramp函数参数（α, β），上表基于α=1, β=32的示意值。NTK-Aware的缩放因子为 $s^{-2i/(|D|-2)}$。
 
-可以看到，**YaRN根据波长实现了从高频（完全内插）到低频（完全外推）的平滑过渡**。
+可以看到，**NTK-Aware和YaRN的缩放方向相同**：都是高频外推（缩放因子≈1）、低频内插（缩放因子≈1/s）。关键区别在于**过渡方式**：NTK-Aware使用指数函数平滑过渡，而YaRN使用ramp函数实现**分段控制**——高频维度（>32周旋转）**完全外推**（因子=1），低频维度（<1周旋转）**完全内插**（因子=1/s），中间维度线性过渡。这种分段策略使得每个频率区间都得到最优处理。
 
 ### 3.4 数学本质
 
 YaRN修改的是RoPE的**有效位置索引**：
 
 **原始RoPE**：
-$$ \text{Attention}(Q_m, K_n) \propto \exp(i \cdot m \cdot \theta_i) \cdot \exp(-i \cdot n \cdot \theta_i) $$
+$$ \text{Attention}(Q_m, K_n) \propto \exp(\mathrm{i} \cdot m \cdot \theta_d) \cdot \exp(-\mathrm{i} \cdot n \cdot \theta_d) $$
+
+其中 $\mathrm{i}$ 为虚数单位，$d$ 为维度索引。
 
 **YaRN修改后**：
-$$ m' = m \cdot f(\lambda_i), \quad n' = n \cdot f(\lambda_i) $$
+$$ m' = m \cdot f(\lambda_d), \quad n' = n \cdot f(\lambda_d) $$
 
 等价于修改旋转频率：
-$$ \theta_i' = h(\theta_i) = (1-\gamma) \cdot \frac{\theta_i}{s} + \gamma \cdot \theta_i $$
+$$ \theta_d' = h(\theta_d) = (1-\gamma) \cdot \frac{\theta_d}{s} + \gamma \cdot \theta_d $$
 
 **效果**：
-- **高频维度**（短波长 $\lambda \ll L$）：$\gamma=0$ → $\theta' = \theta/s$ → 频率被压缩，位置索引"看起来更近"，能适应更长序列
-- **低频维度**（长波长 $\lambda \gg L$）：$\gamma=1$ → $\theta' = \theta$ → 频率不变，保持原有的长距离依赖能力
+- **高频维度**（短波长 $\lambda \ll L$，旋转多周）：$\gamma=1$ → $\theta' = \theta$ → 频率不变，模型已充分学习这些旋转模式，可安全外推
+- **低频维度**（长波长 $\lambda \gg L$，旋转不足一周）：$\gamma=0$ → $\theta' = \theta/s$ → 频率被压缩，将超长位置映射到训练时已见过的范围内
 
 ### 3.5 为什么YaRN如此有效？
 
 ```mermaid
 mindmap
   root((YaRN成功的<br/>五大支柱))
-    1. 基于波长判断
-      使用λ/L作为依据
+    1. 基于旋转周期数判断
+      使用L/λ作为依据
       符合NTK理论
     2. 分段处理
-      短波长完全内插
-      长波长完全外推
+      高频完全外推
+      低频完全内插
       中间平滑过渡
     3. 温度校正
       修正注意力分布
@@ -295,8 +296,8 @@ mindmap
 
 **核心优势**：
 
-1. **理论正确性**：完全基于NTK理论，使用波长作为判断依据，尊重不同频率的内在作用
-2. **无过度外推**：ramp函数确保短波长（高频）完全内插，长波长（低频）完全外推，避免了NTK-Aware在微调时的问题
+1. **理论正确性**：完全基于NTK理论，使用旋转周期数作为判断依据，尊重不同频率的内在作用
+2. **分段精确控制**：ramp函数通过旋转周期数阈值（α, β）将维度明确划分为完全外推区（高频）、完全内插区（低频）和过渡区，相比NTK-Aware的指数过渡更精确可控
 3. **平滑过渡**：分段线性插值确保相邻维度的变化是连续且渐进的
 4. **双重优化**：频率缩放 + 温度校正，同时解决位置编码和注意力分布两个问题
 5. **训练高效**：只需在**极少量长文本数据**上微调（通常**400-1000步**）
@@ -308,7 +309,7 @@ mindmap
 ```mermaid
 flowchart LR
     A["1. 准备基础模型<br/>（如LLaMA 2 7B<br/>训练长度4k）"] --> B["2. 确定扩展目标<br/>（目标长度32k<br/>s=8）"]
-    B --> C["3. 计算ramp函数<br/>γ(r) 基于波长"]
+    B --> C["3. 计算ramp函数<br/>γ(r) 基于旋转周期数"]
     C --> D["4. 应用NTK-by-parts<br/>h(θ) = (1-γ)·θ/s + γ·θ"]
     D --> E["5. 长文本微调<br/>（400-1000步）"]
     E --> F["6. 评估验证<br/>（长文本任务测试）"]
@@ -328,48 +329,62 @@ flowchart LR
 以下是一个简化的PyTorch实现：
 
 ```python
+import math
 import torch
 import torch.nn as nn
 
+# 辅助函数：根据旋转周期数找到对应的维度索引
+def find_correction_dim(num_rotations, dim, base=10000, max_position_embeddings=2048):
+    return (dim * math.log(max_position_embeddings / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
+
+def find_correction_range(low_rot, high_rot, dim, base=10000, max_position_embeddings=2048):
+    low = math.floor(find_correction_dim(low_rot, dim, base, max_position_embeddings))
+    high = math.ceil(find_correction_dim(high_rot, dim, base, max_position_embeddings))
+    return max(low, 0), min(high, dim - 1)
+
 class YaRNScaledRoPE(nn.Module):
     def __init__(self, dim, max_position_embeddings=4096, 
-                 base=10000, scale=8, alpha=1, beta=32):
+                 base=10000, scale=8, beta_fast=32, beta_slow=1):
         """
         Args:
             dim: 模型维度
             max_position_embeddings: 原始训练长度
             base: RoPE的基数（通常为10000）
             scale: 扩展倍数（如4k→32k则为8）
-            alpha, beta: ramp函数的边界参数
+            beta_fast: 完全外推的旋转周期数阈值（默认32，对应论文的β）
+            beta_slow: 完全内插的旋转周期数阈值（默认1，对应论文的α）
         """
         super().__init__()
         self.dim = dim
         self.scale = scale
         
-        # 计算原始频率 θ_i = base^(-2i/d)
-        # 注意：虽然变量名为 inv_freq，但它存储的就是 θ_i 的值
-        # 这是 RoPE 标准实现中的惯例命名
-        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float() / dim))
-        theta_i = inv_freq
+        # 计算原始频率和内插频率
+        pos_freqs = base ** (torch.arange(0, dim, 2).float() / dim)
+        inv_freq_extrapolation = 1.0 / pos_freqs       # θ_i（原始，外推）
+        inv_freq_interpolation = 1.0 / (scale * pos_freqs)  # θ_i/s（内插）
         
-        # 计算波长 λ = 2π / θ
-        wavelengths = 2 * torch.pi / theta_i
+        # 找到ramp函数的维度边界
+        # low = 旋转 beta_fast 周的维度索引（高频边界）
+        # high = 旋转 beta_slow 周的维度索引（低频边界）
+        low, high = find_correction_range(
+            beta_fast, beta_slow, dim, base, max_position_embeddings)
         
-        # 计算 r = λ / L
-        r = wavelengths / max_position_embeddings
+        # 构建ramp函数：从 0（d≤low，高频）到 1（d≥high，低频）
+        ramp = torch.clamp(
+            (torch.arange(dim // 2, dtype=torch.float32) - low) / (high - low), 0, 1)
         
-        # YaRN核心：ramp函数 γ(r)
-        gamma = torch.clamp((r - alpha) / (beta - alpha), 0, 1)
+        # γ = 1 - ramp：高频维度γ=1（外推），低频维度γ=0（内插）
+        inv_freq_mask = 1.0 - ramp
         
         # 应用NTK-by-parts公式：h(θ) = (1-γ)·θ/s + γ·θ
-        scaled_inv_freq = inv_freq * ((1 - gamma) / scale + gamma)
+        inv_freq = inv_freq_interpolation * (1 - inv_freq_mask) + \
+                   inv_freq_extrapolation * inv_freq_mask
         
-        # 可选：应用温度缩放
-        # t = 0.1 * torch.log(torch.tensor(scale)) + 1.0
-        # temp_scale = torch.sqrt(1.0 / t)
-        # scaled_inv_freq = scaled_inv_freq * temp_scale
+        self.register_buffer("inv_freq", inv_freq)
         
-        self.register_buffer("inv_freq", scaled_inv_freq)
+        # 温度缩放因子：根据论文 √(1/t) = 0.1 * ln(s) + 1
+        # 应用于 cos/sin 输出（等价于对 Q/K 向量乘以 √(1/t)）
+        self.mscale = 0.1 * math.log(scale) + 1.0
     
     def forward(self, x, seq_len):
         # 生成位置索引
@@ -381,7 +396,8 @@ class YaRNScaledRoPE(nn.Module):
         # 组合成完整的旋转矩阵
         emb = torch.cat((freqs, freqs), dim=-1)
         
-        return emb.cos(), emb.sin()
+        # 应用温度缩放（等价于对 Q/K 向量乘以 √(1/t)）
+        return emb.cos() * self.mscale, emb.sin() * self.mscale
 
 # 使用示例
 model = YaRNScaledRoPE(dim=128, max_position_embeddings=4096, scale=8)
@@ -394,7 +410,7 @@ print(f"成功将4k模型扩展到32k：{cos.shape}")
 | 模型                   | 原始长度 | 扩展后长度 | 扩展比例 | 上下文扩展技术                          |
 | ---------------------- | -------- | ---------- | -------- | --------------------------------------- |
 | **Qwen2.5系列**        | 4k-32k   | 128k-1M    | 多倍     | ✅ 使用YaRN等RoPE缩放技术               |
-| **DeepSeek-R1**        | 4k       | 128k       | 32×      | ✅ RoPE缩放（具体方法未在报告中公开）   |
+| **DeepSeek-R1**        | -        | 128k       | -        | ✅ 基于DeepSeek-V3，支持128k上下文（具体方法未公开） |
 | **LLaMA 2 (社区扩展)** | 4k       | 32k-128k   | 8-32×    | ✅ 使用YaRN微调                         |
 
 > 💡 **说明**：Qwen2.5配置文件中明确使用了YaRN缩放；DeepSeek-R1支持128k上下文，但技术报告未详细说明具体的RoPE缩放方法。
@@ -490,57 +506,69 @@ graph TB
 
 ### Q1：YaRN的ramp函数具体是怎么工作的？
 
-**A**：ramp函数基于**波长**而非维度索引来判断如何缩放：
+**A**：ramp函数基于**旋转周期数**（维度在训练上下文中完成的完整旋转次数）来判断如何缩放：
 
 ```python
-# 假设 d=128, s=8, L=4096, α=1, β=32
+# 假设 d=128, s=8, L=4096, α(beta_slow)=1, β(beta_fast)=32
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 
-# 计算每个维度的波长
 base = 10000
-i = np.arange(0, 64)  # 维度索引
-theta_i = base ** (-2 * i / 128)  # 频率
-wavelength = 2 * np.pi / theta_i  # 波长
+dim = 128
+s = 8
+L = 4096
+beta_fast = 32  # β：完全外推的旋转周期阈值
+beta_slow = 1   # α：完全内插的旋转周期阈值
 
-# 计算 r = λ / L
-r = wavelength / 4096
+# 计算ramp函数的维度边界（与原始代码一致）
+def find_correction_dim(num_rotations):
+    return (dim * math.log(L / (num_rotations * 2 * math.pi))) / (2 * math.log(base))
 
-# 计算ramp函数 γ(r)
-gamma = np.clip((r - 1) / (32 - 1), 0, 1)
+low = max(math.floor(find_correction_dim(beta_fast)), 0)   # 高频边界
+high = min(math.ceil(find_correction_dim(beta_slow)), dim - 1)  # 低频边界
 
-# 计算有效频率缩放
+# 构建ramp函数和γ
+i = np.arange(0, dim // 2)
+ramp = np.clip((i - low) / (high - low), 0, 1)  # 0→1，从高频到低频
+gamma = 1.0 - ramp  # γ：高频=1（外推），低频=0（内插）
+
+# 计算有效频率缩放因子
 freq_scale = (1 - gamma) / s + gamma
 
-plt.plot(i, freq_scale, label='YaRN')
-plt.axhline(y=1/8, color='r', linestyle='--', label='完全内插')
-plt.axhline(y=1, color='g', linestyle='--', label='完全外推')
+plt.plot(i, freq_scale, label='YaRN (NTK-by-parts)', linewidth=2)
+plt.axhline(y=1/s, color='r', linestyle='--', label=f'完全内插 (1/{s})')
+plt.axhline(y=1, color='g', linestyle='--', label='完全外推 (1.0)')
+plt.axvline(x=low, color='gray', linestyle=':', alpha=0.5, label=f'β={beta_fast}周边界 (d={low})')
+plt.axvline(x=high, color='gray', linestyle=':', alpha=0.5, label=f'α={beta_slow}周边界 (d={high})')
 plt.xlabel('维度索引 i')
 plt.ylabel('频率缩放因子')
 plt.legend()
+plt.title('YaRN ramp函数：高频外推 → 低频内插')
 plt.show()
 ```
 
 关键点：
-1. **短波长**（$\lambda < \alpha L$，即高频）：这些维度在训练时已经完整经历过多个周期，可以安全内插（压缩频率）
-2. **长波长**（$\lambda > \beta L$，即低频）：这些维度在训练时只经历了部分周期，应该外推（保持频率）
-3. **中间波长**（$\alpha L \leq \lambda \leq \beta L$）：平滑过渡，避免突变
+1. **高频维度**（旋转>β=32周）：训练时已完整经历多个旋转周期，模型充分学习了这些维度的模式，可安全**外推**（保持频率不变）
+2. **低频维度**（旋转<α=1周）：训练时仅经历部分周期，外推会产生未见过的旋转角度，应该**内插**（压缩频率，将位置映射回已见范围）
+3. **中间维度**（α ≤ 旋转周期数 ≤ β）：通过ramp函数实现**平滑过渡**，避免突变
 
 ### Q2：为什么YaRN的ramp函数比NTK-Aware的指数函数更好？
 
 **A**：两者的核心区别在于**判断依据**和**过渡方式**：
 
-| 方面               | NTK-Aware        | YaRN (NTK-by-parts)      |
-| ------------------ | ---------------- | ------------------------ |
-| **判断依据**       | 维度索引 $i$     | **波长** $\lambda_i / L$ |
-| **过渡函数**       | 指数函数         | 分段线性（ramp）         |
-| **短波长（高频）** | 轻微内插         | 严格内插（γ=0）          |
-| **长波长（低频）** | 可能不够精确     | 严格外推（γ=1）          |
-| **整体性能**       | 中等             | **最佳**                 |
+| 方面               | NTK-Aware            | YaRN (NTK-by-parts)          |
+| ------------------ | -------------------- | ---------------------------- |
+| **判断依据**       | 维度索引 $i$（隐式） | **旋转周期数** $L/\lambda_i$ |
+| **过渡函数**       | 指数函数（平滑）     | 分段线性ramp（有明确边界）   |
+| **短波长（高频）** | 接近外推（≈1.0）     | **严格外推**（γ=1，完全=1.0）|
+| **长波长（低频）** | 接近内插（≈1/s）     | **严格内插**（γ=0，完全=1/s）|
+| **中间维度**       | 指数渐变             | **线性过渡**（α到β之间）     |
+| **整体性能**       | 中等                 | **最佳**                     |
 
-**关键洞察**：波长是更本质的判断标准。如果某个维度的波长 $\lambda$ 远大于训练长度 $L$，说明模型在训练时从未"看到"完整的一个周期，此时应该外推；反之则应该内插。
+**关键洞察**：旋转周期数是更本质的判断标准。如果某个维度在训练长度内完成了超过β=32个完整旋转周期，说明模型已充分学习该维度的旋转模式，可以安全外推；如果不足α=1个周期，模型只见过部分弧段，应该内插（将扩展位置映射回已见范围）。
 
-YaRN的ramp函数通过明确的边界（α和β）和线性过渡，实现了更精确和可控的频率缩放策略。
+NTK-Aware和YaRN的缩放**方向相同**（都是高频外推、低频内插），但YaRN通过ramp函数的明确边界（α和β）实现了更精确的**分段控制**——高频维度完全不缩放，低频维度完全缩放，避免了NTK-Aware指数过渡中的"半缩放"状态。
 
 ### Q3：YaRN是否适用于所有模型？
 
@@ -599,7 +627,7 @@ graph TB
     ROOT --> D["应用场景"]
     
     A --> A1["NTK-by-parts插值"]
-    A --> A2["避免过度外推"]
+    A --> A2["精确分段控制"]
     A --> A3["保持训练分布"]
     
     B --> B1["极少微调成本"]
@@ -638,8 +666,8 @@ graph TB
 **关键要点回顾**：
 
 1. **历史定位**：YaRN是从RoPE→PI→NTK-Aware的自然演进结果
-2. **核心创新**：NTK-by-parts（基于波长的ramp函数）+ 注意力温度缩放
-3. **理论基础**：基于NTK理论和波长分析，区分高低频分量的不同作用
+2. **核心创新**：NTK-by-parts（基于旋转周期数的ramp函数）+ 注意力温度缩放
+3. **理论基础**：基于NTK理论和旋转周期数分析，区分高低频分量的不同作用
 4. **实用价值**：极少训练（400步）即可扩展8倍，准确率94%+，且微调后效果最佳
 5. **广泛应用**：已成为开源大模型长上下文的首选技术
 
@@ -652,7 +680,8 @@ graph TB
 1. [YaRN: Efficient Context Window Extension of Large Language Models](https://arxiv.org/abs/2309.00071)
 2. [RoFormer: Enhanced Transformer with Rotary Position Embedding](https://arxiv.org/abs/2104.09864)
 3. [Extending Context Window of Large Language Models via Position Interpolation](https://arxiv.org/abs/2306.15595)
-4. [Neural Tangent Kernel: Convergence and Generalization in Neural Networks](https://arxiv.org/abs/1806.07572)
+4. [Fourier Features Let Networks Learn High Frequency Functions in Low Dimensional Domains](https://arxiv.org/abs/2006.10739)
+5. [Neural Tangent Kernel: Convergence and Generalization in Neural Networks](https://arxiv.org/abs/1806.07572)
 
 ---
 

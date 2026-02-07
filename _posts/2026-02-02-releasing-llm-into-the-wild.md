@@ -22,17 +22,11 @@ mermaid: true
 
 ```mermaid
 graph LR
-    subgraph 训练阶段
-        A[训练数据分布 P_train]
-    end
-    
-    subgraph 部署阶段
-        B[实际场景分布 P_deploy]
-    end
-    
-    A -->|分布匹配| C[模型表现优异]
-    A -->|分布偏移| D[模型表现骤降]
-    
+    A[训练数据分布<br>P_train] --> E{分布对比}
+    B[实际场景分布<br>P_deploy] --> E
+    E -->|P_train ≈ P_deploy| C[模型表现优异]
+    E -->|P_train ≠ P_deploy| D[模型表现骤降]
+
     style C fill:#51cf66
     style D fill:#ff6b6b
 ```
@@ -95,7 +89,7 @@ graph LR
 
 ### 4. 必要时进行微调
 
-当场景高度专有且使用频繁，fine-tuning 是最彻底的方案——**让模型真正"见过"你的数据**。
+当场景高度专有且使用频繁，fine-tuning 是最彻底的方案——**让模型真正"见过"你的数据**。但需要注意：微调需要足够量的高质量专有数据，数据不足时反而可能导致性能下降（尤其是超大模型）。
 
 ## 放生指南
 

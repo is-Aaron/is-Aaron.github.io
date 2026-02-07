@@ -266,7 +266,7 @@ func (c *ConsistentHash) Get(key string) string {
 | ----------------- | --------------------------------------------- |
 | **Memcached**     | 客户端实现一致性哈希（ketama 算法）           |
 | **Cassandra**     | Murmur3Partitioner + 虚拟节点（vnodes）       |
-| **Nginx/Tengine** | `consistent_hash` 指令（Tengine）或第三方模块 |
+| **Nginx/Tengine** | Nginx 内置 `hash ... consistent` 参数；Tengine 提供专用 `consistent_hash` 模块 |
 | **Amazon Dynamo** | 一致性哈希的经典实现，影响了众多后续系统      |
 
 > **注意**：Redis Cluster 使用 16384 个**固定哈希槽**（Hash Slots），虽然也能最小化数据迁移，但这是**预分配的分片机制**，与一致性哈希的环形空间动态映射是不同的设计。

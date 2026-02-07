@@ -104,9 +104,9 @@ sequenceDiagram
     Client->>Server: 建立TCP连接 (默认端口1935)
 
     Note over Client, Server: 2. RTMP握手阶段
-    Client->>Server: 发送 C0 (版本号) + C1 (1536字节随机数据)
-    Server-->>Client: 发送 S0 + S1 + S2 (对C1的回显)
-    Client->>Server: 发送 C2 (对S1的回显)
+    Client->>Server: 发送 C0 (版本号) + C1 (时间戳+随机数据，共1536字节)
+    Server-->>Client: 发送 S0 (版本号) + S1 (时间戳+随机数据) + S2 (对C1的回显)
+    Client->>Server: 发送 C2 (对S1的回显，1536字节)
     Note over Client, Server: 握手完成，双方状态同步
 
     Note over Client, Server: 3. 连接与流创建阶段
@@ -135,7 +135,7 @@ sequenceDiagram
 | 步骤 | 发送方向 | 数据包 | 大小 | 说明 |
 |:-----|:---------|:-------|:-----|:-----|
 | 1 | Client → Server | C0 + C1 | 1 + 1536字节 | 版本号 + 时间戳和随机数 |
-| 2 | Server → Client | S0 + S1 + S2 | 1 + 1536 + 1536字节 | 版本号 + 时间戳随机数 + 对C1的回显 |
+| 2 | Server → Client | S0 + S1 + S2 | 1 + 1536 + 1536字节 | 版本号 + 时间戳和随机数 + 对C1的回显 |
 | 3 | Client → Server | C2 | 1536字节 | 对S1的回显 |
 
 **作用**：
@@ -231,7 +231,7 @@ flowchart LR
 
 | 平台          | 推流支持 | 播放支持       |
 | :------------ | :------- | :------------- |
-| Twitch        | ✅ RTMP   | ❌ HLS/HTTP-FLV |
+| Twitch        | ✅ RTMP   | ❌ HLS          |
 | YouTube Live  | ✅ RTMP   | ❌ HLS          |
 | Bilibili      | ✅ RTMP   | ❌ HTTP-FLV/HLS |
 | 抖音          | ✅ RTMP   | ❌ 自有协议     |
@@ -377,7 +377,7 @@ graph TB
 | :----------- | :------------------ | :------- | :--------------------- | :------------------------- |
 | **RTMP**     | 推流1-3秒           | TCP      | 直播推流               | -                          |
 | **WebRTC**   | <500ms（通常240-300ms） | UDP      | 实时通信、超低延迟互动 | 替代RTMP(超低延迟场景)     |
-| **SRT**      | 120ms-3秒           | UDP      | 专业广播、远程制作     | 替代RTMP(网络不稳定场景)   |
+| **SRT**      | 500ms-3秒           | UDP      | 专业广播、远程制作     | 替代RTMP(网络不稳定场景)   |
 | **HLS**      | 10-30秒             | HTTP/TCP | 大规模点播和直播分发   | 由RTMP转封装而来           |
 | **HTTP-FLV** | 2-5秒               | HTTP/TCP | 网页播放               | 由RTMP转封装而来           |
 

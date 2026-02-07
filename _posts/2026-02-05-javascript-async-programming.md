@@ -52,11 +52,10 @@ timeline
     section 回调时代
         1995 : JavaScript 诞生，异步模式初现
         2005 : AJAX 兴起，回调函数成为主流
-    section Promise 时代
+    section Promise 与生成器时代
         2012 : Promise/A+ 规范发布
-        2015 : ES6 正式将 Promise 纳入语言标准
-    section 生成器时代
         2013 : Node.js 社区探索生成器函数 + co 库
+        2015 : ES6 将 Promise 和生成器纳入语言标准
     section async/await 时代
         2017 : ES2017 引入 async/await
         2022 : ES2022 支持模块顶层 await
@@ -225,16 +224,16 @@ co(function* () {
 
 ```mermaid
 flowchart LR
-    A["调用 async 函数"] --> B["执行同步代码"]
+    A["调用 async 函数<br/>（立即返回 Promise）"] --> B["执行同步代码"]
     B --> C["遇到 await 表达式"]
     C --> D["暂停函数，让出控制权"]
-    D --> E["等待 Promise settled<br/>或直接获取普通值"]
+    D --> E["等待 Promise settled<br/>（非 Promise 值自动包装）"]
     E --> F["恢复执行"]
-    F --> G["函数返回 Promise"]
+    F --> G["函数完成<br/>返回的 Promise settled"]
 ```
 
 - **`async`**：声明异步函数，该函数**总是返回 Promise**（即使 return 非 Promise 值也会自动包装）
-- **`await`**：可以等待**任何值**（Promise、thenable 对象或普通值）。如果是 Promise/thenable，则暂停执行直到其 settled；如果是普通值，则直接返回该值。ES2022 起支持在**模块顶层**使用
+- **`await`**：可以等待**任何值**（Promise、thenable 对象或普通值）。非 Promise 值会被自动包装为 `Promise.resolve(value)`。无论哪种情况，`await` 都会暂停当前 async 函数，后续代码作为微任务恢复执行。ES2022 起支持在**模块顶层**使用
 
 ```javascript
 function fetchUser() {

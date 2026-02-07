@@ -91,6 +91,7 @@ iframe.contentDocument;  // 抛出安全错误
 
 // ❌ 禁止：读取跨源 canvas 图像数据
 const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
 ctx.drawImage(crossOriginImg, 0, 0);
 canvas.toDataURL();  // 污染的 canvas，抛出安全错误
 ```

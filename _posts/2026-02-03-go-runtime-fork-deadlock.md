@@ -33,10 +33,10 @@ graph TB
             M3["Thread 3<br/>执行 goroutine"]
         end
         
-        subgraph Background[" 后台守护线程 "]
-            GC["GC 线程<br/>垃圾回收"]
-            NET["网络轮询器<br/>epoll/kqueue"]
-            TIMER["定时器线程<br/>timer 管理"]
+        subgraph Background[" 后台线程与 goroutine "]
+            GC["GC 工作线程<br/>垃圾回收"]
+            SCAV["scavenger<br/>内存回收"]
+            FIN["finalizer<br/>终结器"]
             SYSMON["sysmon<br/>系统监控"]
         end
         
@@ -51,8 +51,8 @@ graph TB
     end
     
     style GC fill:#ff8787
-    style NET fill:#ff8787
-    style TIMER fill:#ff8787
+    style SCAV fill:#ff8787
+    style FIN fill:#ff8787
     style SYSMON fill:#ff8787
     style State fill:#ffd43b
 ```
@@ -60,7 +60,7 @@ graph TB
 **关键特性**：
 
 - **多个 OS 线程（M）**：Go 会启动多个系统线程来并行执行 goroutine
-- **后台守护线程**：GC、网络轮询器、定时器等都在独立线程中运行
+- **后台线程与 goroutine**：GC 工作线程、sysmon、scavenger、finalizer 等在后台运行，持有 Runtime 内部锁
 - **全局锁与状态**：Runtime 内部维护大量全局状态，由互斥锁保护
 
 ### fork 的语义：仅复制调用线程
@@ -189,17 +189,18 @@ graph TB
 
 ## 五、为什么 Go 原生程序通常没事
 
-如果是纯 Go 程序，使用 `os.Exec` 或 `syscall.ForkExec` 时通常不会出问题。这是因为 Go 标准库做了特殊处理：
+如果是纯 Go 程序，使用 `os/exec` 包或 `syscall.ForkExec` 时通常不会出问题。这是因为 Go 标准库做了特殊处理：
 
-### 1. runtime.ForkLock 机制
+### 1. syscall.ForkLock 机制
 
 ```go
-// Go 在 fork 前会锁住所有线程
-runtime.ForkLock.Lock()
+// ForkLock 是 sync.RWMutex，协调文件描述符创建与 fork
+// fd 创建操作持有读锁，fork 持有写锁，防止子进程继承多余的 fd
+syscall.ForkLock.Lock()
 // fork 后立即 exec，不使用残缺的 Runtime
 syscall.RawSyscall(syscall.SYS_FORK, ...)
-syscall.RawSyscall(syscall.SYS_EXEC, ...)
-runtime.ForkLock.Unlock()
+syscall.RawSyscall(syscall.SYS_EXECVE, ...)
+syscall.ForkLock.Unlock()
 ```
 
 ### 2. fork + exec 策略
@@ -226,7 +227,7 @@ graph LR
 | 纯 Go 程序 | Go 控制 fork，可以协调   | 安全 |
 | C + Go .so | C 控制 fork，Go 无法协调 | 危险 |
 
-C 程序随时可能调用 `fork()`，Go Runtime 没有机会执行 fork 前的同步操作（如获取 `ForkLock`、暂停后台线程）。
+C 程序随时可能调用 `fork()`，Go Runtime 没有机会执行 fork 前的协调操作（如获取 `ForkLock`、确保 fork 后立即 exec）。
 
 ## 六、解决方案
 
