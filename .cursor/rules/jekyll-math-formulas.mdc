@@ -1,0 +1,11 @@
+---
+alwaysApply: false
+---
+# Math Formula Rules
+
+Site uses kramdown (server-side) + MathJax v3 (client-side). kramdown runs first, may corrupt LaTeX.
+
+- **Inline math**: Use `$...$`. NEVER use `\(...\)` — kramdown treats `\(` as escaped parenthesis, strips the backslash.
+- **Display math**: `$$` must be on its own line, blank lines before and after.
+- **Absolute values/norms**: Use `\lvert`/`\rvert` inside `$$` blocks. Bare `|` at line start may be parsed as table.
+- **Front matter**: `math: true` is required to load MathJax.
