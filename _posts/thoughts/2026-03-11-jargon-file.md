@@ -41,6 +41,6 @@ Jargon File 在黑客文化中扮演着不可替代的角色。
 如今，Jargon File 属于公有领域（Public Domain），任何人都可以免费获取和阅读、分发。
 
 目前最著名、最常用的在线版本托管在 Eric S. Raymond 的网站上：
-👉 [The Jargon File (catb.org)](http://www.catb.org/jargon/)
+👉 [The Jargon File (catb.org)](https://www.catb.org/jargon/)
 
 如果你想了解为什么程序员总是喜欢用 `foo` 和 `bar` 作为变量名，或者想探究某些奇怪报错信息的历史渊源，去翻一翻 Jargon File 吧，你一定会发现一个充满极客乐趣的新世界！
