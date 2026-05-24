@@ -16,10 +16,10 @@ timezone: Asia/Shanghai
 
 title: 夜秉烛 # the main title
 
-tagline: Thoughts on software engineering and life. # it will display as the subtitle
+tagline: "I always knew I was going to be rich. I don't think I ever doubted it for a minute." # it will display as the subtitle
 
 description: >- # used by seo meta and the atom feed
-  Thoughts on software engineering and life.
+  I always knew I was going to be rich. I don't think I ever doubted it for a minute.
 
 # Fill in the protocol & hostname for your site.
 # E.g. 'https://username.github.io', note that it does not end with a '/'.

@@ -1,0 +1,27 @@
+{
+  "name": "夜秉烛",
+  "short_name": "夜秉烛",
+  "icons": [
+    {
+      "src": "/assets/img/favicons/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/img/favicons/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/img/favicons/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#4f46e5",
+  "background_color": "#4f46e5",
+  "display": "standalone"
+}

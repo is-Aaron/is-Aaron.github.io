@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Z favicon">
+  <defs>
+    <linearGradient id="bg" x1="8" x2="56" y1="8" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <path
+    d="M12 19.64H52L12 44.36H52"
+    fill="none"
+    stroke="#f8fbff"
+    stroke-width="8.2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    transform="rotate(-7 32 32)"
+  />
+</svg>
