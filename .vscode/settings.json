@@ -28,6 +28,6 @@
     "zsh": { "path": "/bin/zsh", "args": ["-l", "-i"] }
 },
 "files.watcherExclude": {
-    "**/target": true
+    "**/target/**": true
 }
 }
